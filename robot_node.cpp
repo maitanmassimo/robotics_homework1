@@ -1,15 +1,17 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
-#include "robotics_hw1/MotorSpeed.h"
+
 #include "nav_msgs/Odometry.h"
 #include <tf/transform_broadcaster.h>
-
+#include "geometry_msgs/TwistStamped.h"
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/exact_time.h>
 #include <message_filters/sync_policies/approximate_time.h>
-
-
+#include <robotics_hw1/MotorSpeed.h>
+#include <dynamic_reconfigure/server.h>
+#include <robotics_odometry_project/parametersConfig.h>
+#include <tf/transform_datatypes.h>
 /*  
     ROBOTICS 1st HOMEWORK 2020/2021 
     Student: Maitan Massimo - 10531426 - 944771 - Computer Science and Engineering, Politecnico di Milano
@@ -24,7 +26,9 @@
                             //if 0, the message filter callback will just compute the odometry
 #define DEBUG_MODE 1 // if 1 the information useful for debugging purpose will be print on screen
 
-#define INTEGRATION_METHOD 0 // if 1 the node uses Euler's integration method, if 2 it uses RUNGE-KUTTA. If 0, uses both and compares them
+
+//the integration method constant was used to test the program BEFORE the implementation of dynamic reconfigure for the integration method
+//#define INTEGRATION_METHOD 0 // if 1 the node uses Euler's integration method, if 2 it uses RUNGE-KUTTA. If 0, uses both and compares them
 class robot_node {
 
 private:
@@ -36,6 +40,11 @@ private:
     message_filters::Subscriber<robotics_hw1::MotorSpeed>* sub_rl;
     message_filters::Subscriber<robotics_hw1::MotorSpeed>* sub_rr;
     message_filters::Subscriber<nav_msgs::Odometry>* sub_scout_odom;
+
+    double parameter_x_initial_position;
+    double parameter_y_initial_position;
+    double parameter_initial_orientation;
+    bool parameter_integration_method;
 
     //define the policy
     typedef message_filters::sync_policies::ApproximateTime<robotics_hw1::MotorSpeed,  
@@ -49,8 +58,11 @@ private:
     double x_position;
     double y_position;
     double orientation;
-    ros::Publisher pub;  //to publish the messages received from the 4 wheel topics in the /rechatter topic (for debugging purposes)
-    ros::Publisher pub2; //to publish the scout odometry messages in the /my_odom topic (for debugging purposes)
+    ros::Publisher pub_rechatter;  //to publish the messages received from the 4 wheel topics in the /rechatter topic (for debugging purposes)
+    ros::Publisher pub_scout_odometry; //to publish the scout odometry messages in the /my_odom topic (for debugging purposes)
+    ros::Publisher pub_my_odom_velocities;
+    ros::Publisher pub_my_odom;
+    ros::Publisher pub_my_odom_position_integration_m;
     ros::Timer timer1; //never say never
     long int previous_time_sec;
     long int previous_time_nsec;
@@ -65,6 +77,10 @@ private:
 
     tf::TransformBroadcaster br;
     tf::Transform transform;
+
+    
+    dynamic_reconfigure::Server<robotics_odometry_project::parametersConfig> server;
+    dynamic_reconfigure::Server<robotics_odometry_project::parametersConfig>::CallbackType f;
 
     /**
     function I created to estimate the gear ratio on the motors/wheels. Takes as input the 4 RPMs and the known linear velocity, and reverts the equation
@@ -133,6 +149,14 @@ private:
             const robotics_hw1::MotorSpeed::ConstPtr& msg_rr,
             const nav_msgs::Odometry::ConstPtr& msg_odom) 
     {
+        if(DEBUG_MODE){
+            ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+            ROS_INFO ("PARAMETERS:");
+            ROS_INFO("parameter_x_initial_position : %f",  parameter_x_initial_position);
+            ROS_INFO("parameter_y_initial_position : %f",  parameter_y_initial_position);
+            ROS_INFO("parameter_initial_orientation : %f",  parameter_initial_orientation);
+            ROS_INFO("integration method : %f",  parameter_initial_orientation);
+        }
         double rpm_fl_wheel = - msg_fl->rpm;
         double rpm_fr_wheel = msg_fr->rpm;
         double rpm_rl_wheel = - msg_rl->rpm;
@@ -145,9 +169,10 @@ private:
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
             ROS_INFO ("Received four rpm messages: (%f,%f,%f,%f))",  rpm_fl_wheel,rpm_fr_wheel, rpm_rl_wheel,rpm_rr_wheel);
             //ROS_INFO ("Received five  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
+            ROS_INFO ("sec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.sec, msg_fr->header.stamp.sec, msg_rl->header.stamp.sec, msg_rr->header.stamp.sec, msg_odom->header.stamp.sec);
+            ROS_INFO ("nsec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
         }
-        ROS_INFO ("sec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.sec, msg_fr->header.stamp.sec, msg_rl->header.stamp.sec, msg_rr->header.stamp.sec, msg_odom->header.stamp.sec);
-        ROS_INFO ("nsec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
+
 
         
         
@@ -269,39 +294,45 @@ private:
             double y_position_rk = 0;
             double orientation_rk = 0;
 
-            if(INTEGRATION_METHOD==0 || INTEGRATION_METHOD==1){
-                ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-                ROS_INFO ("ODOMETRY - EULER INTEGRATION METHOD");
+            if(!parameter_integration_method){ //parameter_integration_method = 0 -> Euler
+                
                 x_position_euler = time_step*std::cos(orientation)*robot_linear_velocity + x_position;
                 y_position_euler = time_step*std::sin(orientation)*robot_linear_velocity + y_position;
                 orientation_euler = time_step*robot_angular_velocity + orientation;
-                ROS_INFO ("X position:\tEstimated: %f\tScout odometry: %f\tError: %f", x_position_euler, scout_odom_x, std::abs(x_position_euler-scout_odom_x));
-                ROS_INFO ("Y positison:\tEstimated: %f\tScout odometry: %f\tError: %f", y_position_euler, scout_odom_y, std::abs(y_position_euler-scout_odom_y));
-                ROS_INFO ("Orientation:\tEstimated: %f\tScout odometry: %f\tError: %f", orientation_euler, scout_odom_orientation, std::abs(orientation_euler-scout_odom_orientation));
+                if(DEBUG_MODE){
+                    ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    ROS_INFO ("ODOMETRY - EULER INTEGRATION METHOD");
+                    ROS_INFO ("X position:\tEstimated: %f\tScout odometry: %f\tError: %f", x_position_euler, scout_odom_x, std::abs(x_position_euler-scout_odom_x));
+                    ROS_INFO ("Y positison:\tEstimated: %f\tScout odometry: %f\tError: %f", y_position_euler, scout_odom_y, std::abs(y_position_euler-scout_odom_y));
+                    ROS_INFO ("Orientation:\tEstimated: %f\tScout odometry: %f\tError: %f", orientation_euler, scout_odom_orientation, std::abs(orientation_euler-scout_odom_orientation));
+                    }
                 transform.setOrigin( tf::Vector3(x_position_euler, y_position_euler, 0) );
                 tf::Quaternion q;
                 q.setRPY(0, 0, orientation_euler);
                 transform.setRotation(q);
-                br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "euler_custom_odom"));
-            }
-            if(INTEGRATION_METHOD==0 || INTEGRATION_METHOD == 2){
-                ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-                ROS_INFO ("ODOMETRY - RUNGE-KUTTA INTEGRATION METHOD");
+                br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "custom_odom"));
+            }else{
+                
                 x_position_rk = time_step*std::cos(orientation+(time_step*robot_angular_velocity)/2)*robot_linear_velocity + x_position;
                 y_position_rk = time_step*std::sin(orientation+(time_step*robot_angular_velocity)/2)*robot_linear_velocity + y_position;
                 orientation_rk = time_step*robot_angular_velocity + orientation;
-                ROS_INFO ("X position:\tEstimated: %f\tScout odometry: %f\tError: %f", x_position_rk, scout_odom_x, std::abs(x_position_rk-scout_odom_x));
-                ROS_INFO ("Y position:\tEstimated: %f\tScout odometry: %f\tError: %f", y_position_rk, scout_odom_y, std::abs(y_position_rk-scout_odom_y));
-                ROS_INFO ("Orientation:\tEstimated: %f\tScout odometry: %f\tError: %f", orientation_rk, scout_odom_orientation, std::abs(orientation_rk-scout_odom_orientation));
+                if(DEBUG_MODE){
+                    ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    ROS_INFO ("ODOMETRY - RUNGE-KUTTA INTEGRATION METHOD");
+                    ROS_INFO ("X position:\tEstimated: %f\tScout odometry: %f\tError: %f", x_position_rk, scout_odom_x, std::abs(x_position_rk-scout_odom_x));
+                    ROS_INFO ("Y position:\tEstimated: %f\tScout odometry: %f\tError: %f", y_position_rk, scout_odom_y, std::abs(y_position_rk-scout_odom_y)); 
+                    ROS_INFO ("Orientation:\tEstimated: %f\tScout odometry: %f\tError: %f", orientation_rk, scout_odom_orientation, std::abs(orientation_rk-scout_odom_orientation));
+                }
+               
                 transform.setOrigin( tf::Vector3(x_position_rk, y_position_rk, 0) );
                 tf::Quaternion q;
                 q.setRPY(0, 0, orientation_rk);
                 transform.setRotation(q);
-                br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "rk_custom_odom"));
+                br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "custom_odom"));
                 
             }
 
-            if(INTEGRATION_METHOD == 0 || INTEGRATION_METHOD == 2){
+            if(parameter_integration_method){
 
                 x_position = x_position_rk;
                 y_position = y_position_rk;
@@ -317,20 +348,60 @@ private:
             q.setRPY(0, 0, scout_odom_orientation);
             transform.setRotation(q);
             br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "scout_odom"));
-            
-
-            
+               
         }
         ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
 
         previous_time_sec = current_time_sec;
         previous_time_nsec = current_time_nsec;
         
-        pub.publish(msg_fl);
-        pub.publish(msg_fr);
-        pub.publish(msg_rl);
-        pub.publish(msg_rr);
-        pub2.publish(msg_odom);
+        pub_rechatter.publish(msg_fl);
+        pub_rechatter.publish(msg_fr);
+        pub_rechatter.publish(msg_rl);
+        pub_rechatter.publish(msg_rr);
+        pub_scout_odometry.publish(msg_odom);
+
+        geometry_msgs::TwistStamped twist_stamped;
+        twist_stamped.header.stamp.sec = current_time_sec;
+        twist_stamped.header.stamp.nsec = current_time_nsec;
+        twist_stamped.header.frame_id = "twist_frame_id";
+        twist_stamped.twist.linear.x = robot_linear_velocity; 
+        twist_stamped.twist.linear.y = 0.0;
+        twist_stamped.twist.linear.z = 0.0;
+        twist_stamped.twist.angular.x = 0.0;
+        twist_stamped.twist.angular.y = 0.0;
+        twist_stamped.twist.angular.z = robot_angular_velocity;
+
+        pub_my_odom_velocities.publish(twist_stamped); //TBD: create another node that reads from that topic and publishes on tf
+
+        nav_msgs::Odometry odometry;
+        odometry.header.stamp.sec = current_time_sec;
+        odometry.header.stamp.nsec = current_time_nsec;
+        odometry.header.frame_id = "custom_odom";
+        odometry.pose.pose.position.x = x_position;
+        odometry.pose.pose.position.y = y_position;
+        odometry.pose.pose.position.z = 0.0;
+        geometry_msgs::Quaternion q_2;
+        q.setRPY(0, 0, orientation);
+        quaternionTFToMsg(q , q_2);
+        odometry.pose.pose.orientation.x = q_2.x;
+        odometry.pose.pose.orientation.y = q_2.y;
+        odometry.pose.pose.orientation.z = q_2.z;
+        odometry.pose.pose.orientation.w = q_2.w;
+        odometry.twist.twist.linear.x = robot_linear_velocity;
+        odometry.twist.twist.linear.y = 0.0;
+        odometry.twist.twist.linear.z = 0.0;
+        odometry.twist.twist.angular.x = 0.0;
+        odometry.twist.twist.angular.y = 0.0;
+        odometry.twist.twist.angular.z = robot_angular_velocity;
+
+        pub_my_odom.publish(odometry);
+    }
+
+    void callback(robotics_odometry_project::parametersConfig &config, uint32_t level) {
+            ROS_INFO("Reconfigure Request: %d", config.int_meth);
+            parameter_integration_method = config.int_meth;
+            ROS_INFO ("%d",level);
     }
 
 public:
@@ -341,44 +412,48 @@ public:
         sub_rr = new message_filters::Subscriber<robotics_hw1::MotorSpeed>(n, "/motor_speed_rr", 1); 
 
         sub_scout_odom = new message_filters::Subscriber<nav_msgs::Odometry>(n, "/scout_odom", 1);
-        //just for test
-        /*sub->registerCallback((boost::bind(&robot_node::callback_m, this,_1)));
-        sub2->registerCallback((boost::bind(&robot_node::callback_m2, this, _1)));
-        sub3->registerCallback((boost::bind(&robot_node::callback_m3, this, _1)));
-        sub4->registerCallback((boost::bind(&robot_node::callback_m4, this, _1)));*/
 
         mean_apparent_baseline_ratio = 1;
         mean_gear_ratio = 40;
         calibration_samples_gear_ratio = 0;
         calibration_samples_apparent_baseline_ratio = 0;
-        previous_time_sec = -1;//ros::Time::now();
+        previous_time_sec = -1;
         previous_time_nsec = -1;
         //computed through calibration over >2000 samples
         gear_ratio = 38.41;                 
         apparent_baseline_ratio = 1.734;
 
-        x_position = 0;
-        y_position = 0;
-        orientation = 0;
+        n.getParam("/parameter_x_initial_position", parameter_x_initial_position);
+        n.getParam("/parameter_y_initial_position", parameter_y_initial_position);
+        n.getParam("/parameter_initial_orientation", parameter_initial_orientation);
+        n.getParam("/int_meth", parameter_integration_method);
 
-        pub = n.advertise<robotics_hw1::MotorSpeed >("/rechatter", 1);
-        pub2 = n.advertise<nav_msgs::Odometry >("/my_odom", 1);
-        //timer1 = n.createTimer(ros::Duration(1), &robot_node::callback_t, this);
+        x_position = parameter_x_initial_position;
+        y_position = parameter_y_initial_position;
+        orientation = parameter_initial_orientation;
+
+        pub_rechatter = n.advertise<robotics_hw1::MotorSpeed >("/rechatter", 1);
+        pub_scout_odometry = n.advertise<nav_msgs::Odometry >("/rechat_scout_odom", 1);
+        pub_my_odom_velocities= n.advertise<geometry_msgs::TwistStamped >("/my_local_velocities", 1); //in this topic we publish the velocities in the LOCAL robot frame
+        pub_my_odom = n.advertise<nav_msgs::Odometry >("/my_odometry", 1);
+        //pub_my_odom_position_integration_m;
         
         sync = new message_filters::Synchronizer<MySyncPolicy>(MySyncPolicy(10), *sub_fl, *sub_fr, *sub_rl, *sub_rr, *sub_scout_odom);
         sync->registerCallback(boost::bind(&robot_node::message_filter_callback, this, _1, _2, _3, _4, _5));
+
+        f = boost::bind(&robot_node::callback, this, _1, _2);
+        server.setCallback(f);
+        
     }
+
+    
 
     
 };
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "subscribe_and_publish");
-  
+  ros::init(argc, argv, "robot_main_node");
   robot_node my_robot_node;
-  
-  ros::spin();
-  
+  ros::spin(); 
   return 0;
 }
-
