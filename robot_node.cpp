@@ -19,9 +19,11 @@
 */
 
 /*
-    Notes about the project: I decided to do all the stuff in a single node in order to reduce the complexity due to communication among nodes and synchronization of messages
-    The drawback is that this main node has a lot of work to do, but as long as it is able to process the requests and do all the computation in an acceptable time slot 
-    in my opinion it is a good tradeoff between code complexity, workload and testability
+    Notes about the project: I decided to do most of the stuff in a single node in order to reduce the  
+    overhead due to communication among nodes and synchronization of messages
+    The drawback is that this main node has a lot of work to do, but as long as it is able to process the requests 
+    and do all the computation in an acceptable time slot in my opinion it is a good tradeoff between code readability, 
+    workload and testability
 */
 
 
