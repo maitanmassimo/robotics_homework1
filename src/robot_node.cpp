@@ -35,8 +35,6 @@
     3) Since the optional part of calibration with ground truth pose uses another information (the gt_pose), I decided to setup that functionality in
        another node called gt_calibration_node.cpp
 
-    4) The utility_node is just a node I used to test and call the services
-
 */
 
 
