@@ -65,18 +65,6 @@ target_link_libraries(robot_main_node
   ${catkin_LIBRARIES}
 )
 
-add_executable(robot_utility_node
-  src/utility_node.cpp
-)
-add_dependencies(robot_utility_node 
-	${${PROJECT_NAME}_EXPORTED_TARGETS} 
-	${catkin_EXPORTED_TARGETS}
-  
-)
-target_link_libraries(robot_utility_node
-  ${catkin_LIBRARIES}
-)
-
 add_executable(gt_calibration_node
   src/gt_calibration_node.cpp
 )
