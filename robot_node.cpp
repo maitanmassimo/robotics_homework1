@@ -14,31 +14,37 @@
 #include "robotics_odometry_project/resetOdometry.h"
 #include "robotics_odometry_project/integratedOdom.h"
 #include "std_srvs/Empty.h"
+
 /*  
     ROBOTICS 1st HOMEWORK 2020/2021 
     Student: Maitan Massimo - 10531426 - 944771 - Computer Science and Engineering, Politecnico di Milano
 */
 
 /*
-    Notes about the project: I decided to do most of the stuff in a single node in order to reduce the  
-    overhead due to communication among nodes and synchronization of messages
-    The drawback is that this main node has a lot of work to do, but as long as it is able to process the requests 
-    and do all the computation in an acceptable time slot in my opinion it is a good tradeoff between code readability, 
-    workload and testability
+    Notes about the project: 
+    
+    1) I decided to do most of the stuff in a single node in order to reduce the overhead due to communication among nodes and synchronization of messages
+       The drawback is that this main node has a lot of work to do, but as long as it is able to process the requests 
+       and do all the computation in an acceptable time slot in my opinion it is a good tradeoff between code readability, workload and testability
+
+    2) Since I assume that calibration (with scout odometry) and odometry are two tasks performed separately, I used the same node 
+       to perform both the operation at different times. The mode can be selected by means of the parameter parameter_calibration_mode.
+       If it is true, this node will perform a calibration using the scout odometry.
+       Otherwise, it will use integration methods to compute the odometry.
+
+    3) Since the optional part of calibration with ground truth pose uses another information (the gt_pose), I decided to setup that functionality in
+       another node called gt_calibration_node.cpp
+
+    4) The utility_node is just a node I used to test and call the services
+
 */
 
 
 #define WHEEL_RAY 0.1573      //ray of the wheels
 #define RPM_ON_RADS 0.10472   //constant used to convert from RPM to Rad/s
 #define ROBOT_BASELINE 0.583  //length of the (full) robot baseline
-
-#define CALIBRATION_MODE 0 //if 1, the message filter callback will print information about the estimated parameters, such as the GEAR RATIO of the wheels and the APPARENT BASELINE for the skid steering
-                            //if 0, the message filter callback will just compute the odometry
 #define DEBUG_MODE 1 // if 1 the information useful for debugging purpose will be print on screen
 
-
-//the integration method constant was used to test the program BEFORE the implementation of dynamic reconfigure for the integration method
-//#define INTEGRATION_METHOD 0 // if 1 the node uses Euler's integration method, if 2 it uses RUNGE-KUTTA. If 0, uses both and compares them
 class robot_node {
 
 private:
@@ -55,6 +61,7 @@ private:
     double parameter_y_initial_position;
     double parameter_initial_orientation;
     bool parameter_integration_method;
+    bool parameter_calibration_mode;
 
     //services
 
@@ -122,7 +129,7 @@ private:
 
     double estimate_gear_ratio(double m1_rpm,double m2_rpm,double m3_rpm, double m4_rpm, double linear_velocity){
         //ROS_INFO("Estimating gear ratio with data: %f, %f, %f, %f, %f", m1_rpm, m2_rpm, m3_rpm,  m4_rpm,  linear_velocity);
-        if(std::abs(linear_velocity)!=0){
+        if(std::abs(linear_velocity)>0.01){
             return (((m1_rpm + m2_rpm + m3_rpm + m4_rpm)*WHEEL_RAY)/(4*linear_velocity))*RPM_ON_RADS;
         }
         else{ //when the linear velocity of the robot is 0, we cannot estimate the gear ratio, because we would have 0 as denominator, so we return an error value
@@ -138,7 +145,7 @@ private:
     double estimate_apparent_baseline_ratio(double m1_rpm,double m2_rpm,double m3_rpm, double m4_rpm, double angular_velocity, double gear_ratio)
     {
         //ROS_INFO("Estimating apparent baseline ratio with data: %f, %f, %f, %f, %f, %f", m1_rpm, m2_rpm, m3_rpm,  m4_rpm,  angular_velocity, gear_ratio);
-        if(std::abs(angular_velocity)!=0){
+        if(std::abs(angular_velocity)>0.01){
             return (((m2_rpm + m4_rpm - m1_rpm - m3_rpm)*WHEEL_RAY*RPM_ON_RADS)/(2*angular_velocity*(gear_ratio)*ROBOT_BASELINE));
         }
         else{
@@ -164,6 +171,9 @@ private:
             const robotics_hw1::MotorSpeed::ConstPtr& msg_rr,
             const nav_msgs::Odometry::ConstPtr& msg_odom) 
     {
+        ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+        ROS_INFO ("ROBOT MAIN NODE");      
+
         if(DEBUG_MODE){
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
             ROS_INFO ("PARAMETERS:");
@@ -183,7 +193,6 @@ private:
         if(DEBUG_MODE){
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
             ROS_INFO ("Received four rpm messages: (%f,%f,%f,%f))",  rpm_fl_wheel,rpm_fr_wheel, rpm_rl_wheel,rpm_rr_wheel);
-            //ROS_INFO ("Received five  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
             ROS_INFO ("sec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.sec, msg_fr->header.stamp.sec, msg_rl->header.stamp.sec, msg_rr->header.stamp.sec, msg_odom->header.stamp.sec);
             ROS_INFO ("nsec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
         }
@@ -220,7 +229,7 @@ private:
 
         //now that we have the number of round per minutes, we have to compute a mean for the left and right tracks
       
-        if(CALIBRATION_MODE){
+        if(parameter_calibration_mode){
             double estimated_gear_ratio = estimate_gear_ratio(rpm_fl_wheel, rpm_fr_wheel, rpm_rl_wheel, rpm_rr_wheel, scout_odom_x_lin_vel);
             double estimated_apparent_baseline_ratio = estimate_apparent_baseline_ratio(rpm_fl_wheel, rpm_fr_wheel, rpm_rl_wheel, rpm_rr_wheel, scout_odom_z_ang_vel, gear_ratio);
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
@@ -231,10 +240,9 @@ private:
             }else{
                 ROS_INFO("Estimated gear ratio: %f", estimated_gear_ratio);
                 gear_ratio = estimated_gear_ratio;
-                update_average_gear_ratio(gear_ratio);
-
-                ROS_INFO("Average gear ratio: %f\t# samples = %d", mean_gear_ratio, calibration_samples_gear_ratio);
+                update_average_gear_ratio(gear_ratio); 
             }
+            ROS_INFO("Average gear ratio: %f\t# samples = %d", mean_gear_ratio, calibration_samples_gear_ratio);
 
             if(estimated_apparent_baseline_ratio == -1){
                 ROS_INFO("unable to estimate apparent baseline ratio");
@@ -244,9 +252,8 @@ private:
                 ROS_INFO("Estimated apparent baseline ratio: %f,\tapparent baseline: %f m", estimated_apparent_baseline_ratio, estimated_apparent_baseline_ratio*ROBOT_BASELINE);
                 apparent_baseline_ratio = estimated_apparent_baseline_ratio;
                 update_average_apparent_baseline(apparent_baseline_ratio);
-
-                ROS_INFO("Average apparent baseline ratio: %f,\tapparent baseline: %f m,\t# samples = %d", mean_apparent_baseline_ratio,mean_apparent_baseline_ratio*ROBOT_BASELINE, calibration_samples_gear_ratio);
             } 
+            ROS_INFO("Average apparent baseline ratio: %f,\tapparent baseline: %f m,\t# samples = %d", mean_apparent_baseline_ratio,mean_apparent_baseline_ratio*ROBOT_BASELINE, calibration_samples_gear_ratio);
         }
         
         //compute tracks angular velocities
@@ -270,11 +277,11 @@ private:
         {
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
             ROS_INFO ("VELOCITY ESTIMATION");
-            /*ROS_INFO ("Tracks ANGULAR velocities -> \tLeft: %f rad/s = %f deg/s,\tRight: %f rad/s = %f deg/s", left_track_rad_s, 
+            ROS_INFO ("Tracks ANGULAR velocities -> \tLeft: %f rad/s = %f deg/s,\tRight: %f rad/s = %f deg/s", left_track_rad_s, 
                                                                                                             left_track_rad_s*180/M_PI,
                                                                                                             right_track_rad_s, 
                                                                                                             right_track_rad_s*180/M_PI);
-            ROS_INFO ("Tracks LINEAR velocities --> \tLeft: %f m/s,\tRight: %f m/s", left_track_lin_vel, right_track_lin_vel); */
+            ROS_INFO ("Tracks LINEAR velocities --> \tLeft: %f m/s,\tRight: %f m/s", left_track_lin_vel, right_track_lin_vel); 
             ROS_INFO ("ESTIMATED velocities ------> \tLinear: %f m/s,\tAngular: %f rad/s = %f deg/s", robot_linear_velocity, robot_angular_velocity, robot_angular_velocity*180/M_PI);                                                                                                                                                                                              
             ROS_INFO ("SCOUT odometry velocities--> \tLinear %f m/s,\tAngular %f rad/s", scout_odom_x_lin_vel, scout_odom_z_ang_vel);
             ROS_INFO ("ERROR = %f, \t\tLinear: %f m/s,\tAngular: %f rad/s = %f deg/s", error, linear_velocity_error, angular_velocity_error, angular_velocity_error*180/M_PI);
@@ -286,8 +293,7 @@ private:
         current_time_sec = msg_fl->header.stamp.sec;
         current_time_nsec = msg_fl->header.stamp.nsec;
 
-
-        if(previous_time_sec!= -1){
+        if(previous_time_sec!= -1 && !parameter_calibration_mode){
 
             if(current_time_sec == previous_time_sec)
                 time_step = (current_time_nsec - previous_time_nsec)/1e+9;
@@ -363,13 +369,7 @@ private:
         ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
 
         previous_time_sec = current_time_sec;
-        previous_time_nsec = current_time_nsec;
-        
-        /*pub_rechatter.publish(msg_fl);                -> for debugging purposes!
-        pub_rechatter.publish(msg_fr);
-        pub_rechatter.publish(msg_rl);
-        pub_rechatter.publish(msg_rr);
-        pub_scout_odometry.publish(msg_odom);*/
+        previous_time_nsec = current_time_nsec;     
 
         geometry_msgs::TwistStamped twist_stamped;
         twist_stamped.header.stamp.sec = current_time_sec;
@@ -382,7 +382,7 @@ private:
         twist_stamped.twist.angular.y = 0.0;
         twist_stamped.twist.angular.z = robot_angular_velocity;
 
-        pub_my_odom_velocities.publish(twist_stamped); //TBD: create another node that reads from that topic and publishes on tf
+        pub_my_odom_velocities.publish(twist_stamped); 
 
         robotics_odometry_project::integratedOdom customMessage;
 
@@ -443,12 +443,12 @@ public:
 
         ROS_INFO ("ROBOT MAIN NODE");
         /*
-            This node publishes on 2 different topics, in particular
+            This node publishes on 2 different topics, in particular:
 
-                /my_local_velocities: here I publish geometry_msgs::TwistStamped messages that contain information about the estimation of 
-                                        local velocities of the robot in its local frame
+            /my_local_velocities: here I publish geometry_msgs::TwistStamped messages that contain information about the estimation of 
+                                    local velocities of the robot in its local frame
 
-                /custom_odometry: here I publish the custom messages with the information about the Odometry computed in this node and the integration method used        
+            /custom_odometry: here I publish the custom messages with the information about the Odometry computed in this node and the integration method used        
         */
         pub_my_odom_velocities= n.advertise<geometry_msgs::TwistStamped >("/my_local_velocities", 1); 
         pub_my_odom_position_integration_m = n.advertise<robotics_odometry_project::integratedOdom>("/custom_odometry", 1);
@@ -468,33 +468,27 @@ public:
         calibration_samples_apparent_baseline_ratio = 0;
         previous_time_sec = -1;
         previous_time_nsec = -1;
-
-
-        
-        gear_ratio = 38.41;                 //computed through calibration over >2000 samples   
-        apparent_baseline_ratio = 1.734;    //computed through calibration over >2000 samples
+       
+        gear_ratio = 38.184894;                 //computed through calibration over >3000 samples   
+        apparent_baseline_ratio = 1.767442;    //computed through calibration over >3000 samples
 
         n.getParam("/parameter_x_initial_position", parameter_x_initial_position);
         n.getParam("/parameter_y_initial_position", parameter_y_initial_position);
         n.getParam("/parameter_initial_orientation", parameter_initial_orientation);
         n.getParam("/int_meth", parameter_integration_method);
-
+        n.getParam("/parameter_calibration_mode", parameter_calibration_mode);
         x_position = parameter_x_initial_position;
         y_position = parameter_y_initial_position;
         orientation = parameter_initial_orientation;
-
-        
-        //pub_rechatter = n.advertise<robotics_hw1::MotorSpeed >("/rechatter", 1); //---> used for debug!
-        //pub_scout_odometry = n.advertise<nav_msgs::Odometry >("/rechat_scout_odom", 1);//---> used for debug!
         
         sync = new message_filters::Synchronizer<MySyncPolicy>(MySyncPolicy(10), *sub_fl, *sub_fr, *sub_rl, *sub_rr, *sub_scout_odom);
         sync->registerCallback(boost::bind(&robot_node::message_filter_callback, this, _1, _2, _3, _4, _5));
 
-        f = boost::bind(&robot_node::callback, this, _1, _2);
+        f = boost::bind(&robot_node::callback, this, _1, _2); //callback for dynamic reconfigure
         server.setCallback(f);
 
-        service1 = n.advertiseService("reset_odometry_origin", &robot_node::reset_odometry_origin, this);
-        service2 = n.advertiseService("reset_odometry_custom", &robot_node::reset_odometry_custom, this);
+        service1 = n.advertiseService("reset_odometry_origin", &robot_node::reset_odometry_origin, this); //service for resetting the odometry to (0,0,0)
+        service2 = n.advertiseService("reset_odometry_custom", &robot_node::reset_odometry_custom, this); //service for resetting the odometry to a custom pose
     }    
 };
 
