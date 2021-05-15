@@ -14,6 +14,7 @@
 #include "robotics_odometry_project/resetOdometry.h"
 #include "robotics_odometry_project/integratedOdom.h"
 #include <math.h> 
+#include "std_srvs/Empty.h"
 
 #define WHEEL_RAY 0.1573      //ray of the wheels
 #define RPM_ON_RADS 0.10472   //constant used to convert from RPM to Rad/s
@@ -180,7 +181,6 @@ private:
         if(DEBUG_MODE){
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
             ROS_INFO ("Received four rpm messages: (%f,%f,%f,%f))",  rpm_fl_wheel,rpm_fr_wheel, rpm_rl_wheel,rpm_rr_wheel);
-            ROS_INFO ("Received five  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
             ROS_INFO ("sec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.sec, msg_fr->header.stamp.sec, msg_rl->header.stamp.sec, msg_rr->header.stamp.sec, msg_gt->header.stamp.sec);
             ROS_INFO ("nsec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_gt->header.stamp.nsec);
         }
