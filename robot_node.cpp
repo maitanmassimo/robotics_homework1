@@ -13,6 +13,7 @@
 #include <tf/transform_datatypes.h>
 #include "robotics_odometry_project/resetOdometry.h"
 #include "robotics_odometry_project/integratedOdom.h"
+#include "std_srvs/Empty.h"
 /*  
     ROBOTICS 1st HOMEWORK 2020/2021 
     Student: Maitan Massimo - 10531426 - 944771 - Computer Science and Engineering, Politecnico di Milano
@@ -414,12 +415,10 @@ private:
     }
 
     void callback(robotics_odometry_project::parametersConfig &config, uint32_t level) {
-            ROS_INFO("Reconfigure Request: %d", config.int_meth);
             parameter_integration_method = config.int_meth;
-            ROS_INFO ("%d",level);
     }
 
-    bool reset_odometry_origin(robotics_odometry_project::resetOdometry::Request  &req, robotics_odometry_project::resetOdometry::Response &res)
+    bool reset_odometry_origin(std_srvs::Empty::Request  &req, std_srvs::Empty::Response &res)
     {
         ROS_INFO("Resetting odometry to (0,0,0)");
         this->x_position = 0.0;
