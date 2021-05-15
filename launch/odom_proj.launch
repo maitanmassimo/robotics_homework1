@@ -1,0 +1,15 @@
+<launch>
+
+ 	<param name="parameter_x_initial_position" value="0" />
+ 	<param name="parameter_y_initial_position" value="0" />
+ 	<param name="parameter_initial_orientation" value="0" />
+	<param name="parameter_calibration_mode" value="false" />
+
+	<node pkg="robotics_odometry_project" name="robot_main_node" type="robot_main_node" output="screen" launch-prefix="gnome-terminal --command"/>
+
+	<node pkg="tf" type="static_transform_publisher" name="static_transform" args="-0.832142 0.426362 0 0 0 0.5336659, 0.8456954 world odom 100" />
+
+	<node pkg="robotics_odometry_project" name="robot_utility_node" type="gt_calibration_node" output="screen" launch-prefix="gnome-terminal --command"/> --!>
+
+
+</launch>
