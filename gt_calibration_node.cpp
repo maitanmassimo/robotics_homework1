@@ -147,10 +147,8 @@ private:
             ROS_INFO("Unable to estimate a reasonable apparent baseline ratio, the angular velocity is negligible");
             return -1; //when the robot is not turning it is not possible to estimate the apparent baseline, so we return an error value
         }
-    }
+    }  
     
-    
-
     void update_average_apparent_baseline(double new_apparent_baseline){
         
         mean_apparent_baseline_ratio = (mean_apparent_baseline_ratio*calibration_samples_apparent_baseline_ratio + new_apparent_baseline)/(calibration_samples_apparent_baseline_ratio+1);
@@ -169,14 +167,8 @@ private:
             const robotics_hw1::MotorSpeed::ConstPtr& msg_rr,
             const geometry_msgs::PoseStamped::ConstPtr& msg_gt) 
     {
-        if(false){//(DEBUG_MODE){
-            ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-            ROS_INFO ("PARAMETERS:");
-            ROS_INFO("parameter_x_initial_position : %f",  parameter_x_initial_position);
-            ROS_INFO("parameter_y_initial_position : %f",  parameter_y_initial_position);
-            ROS_INFO("parameter_initial_orientation : %f",  parameter_initial_orientation);
-            ROS_INFO("integration method : %f",  parameter_initial_orientation);
-        }
+        ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+        ROS_INFO ("ROBOT GROUND TRUTH CALIBRATION NODE");      
         double rpm_fl_wheel = - msg_fl->rpm;
         double rpm_fr_wheel = msg_fr->rpm;
         double rpm_rl_wheel = - msg_rl->rpm;
@@ -187,8 +179,8 @@ private:
 
         if(DEBUG_MODE){
             ROS_INFO ("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-            //ROS_INFO ("Received four rpm messages: (%f,%f,%f,%f))",  rpm_fl_wheel,rpm_fr_wheel, rpm_rl_wheel,rpm_rr_wheel);
-            //ROS_INFO ("Received five  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
+            ROS_INFO ("Received four rpm messages: (%f,%f,%f,%f))",  rpm_fl_wheel,rpm_fr_wheel, rpm_rl_wheel,rpm_rr_wheel);
+            ROS_INFO ("Received five  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_odom->header.stamp.nsec);
             ROS_INFO ("sec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.sec, msg_fr->header.stamp.sec, msg_rl->header.stamp.sec, msg_rr->header.stamp.sec, msg_gt->header.stamp.sec);
             ROS_INFO ("nsec  messages: (%d,%d,%d,%d,%d)", msg_fl->header.stamp.nsec, msg_fr->header.stamp.nsec, msg_rl->header.stamp.nsec, msg_rr->header.stamp.nsec, msg_gt->header.stamp.nsec);
         }
@@ -217,7 +209,6 @@ private:
 
         //linear velocity of the robot
         double gt_x_lin_vel = 0.0;
-
 
         //angular velocity of the robot
         double gt_z_ang_vel = 0.0;
@@ -302,16 +293,11 @@ private:
         q.setRPY(0, 0, gt_pose_orientation);
         transform.setRotation(q);
         br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "gt_pose"));
-
     }
 
 
 public:
     gt_calibration_node(){
-
-
-        ROS_INFO ("ROBOT GROUND TRUTH CALIBRATION NODE");      
-
         //in order to estimate the angular velocity of the wheel, the node must subscribe to the four motors topics 
         sub_fl = new message_filters::Subscriber<robotics_hw1::MotorSpeed>(n, "/motor_speed_fl", 1);
         sub_fr = new message_filters::Subscriber<robotics_hw1::MotorSpeed>(n, "/motor_speed_fr", 1);
